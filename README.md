@@ -1,82 +1,152 @@
-![fetcher](https://github.com/bunnykek/jiosaavn-dl/blob/main/assets/logo.svg "jiosaavn-dl")
+![jiosaavn-dl](assets/logo.svg)
+
 # jiosaavn-dl
-Music, Album and Playlist downloader for JioSaavn
 
-## Features
+A Python CLI for downloading JioSaavn songs, albums, and playlists as AAC audio in an M4A container. Tracks include available metadata, lyrics, and embedded artwork.
 
-- Downloads tracks, albums and playlists in maximum available quality (320kbps AAC in M4A container).
-- Automatically tags the tracks with all the necessary metadata, lyrics and cover art.
+## Install
 
-## How to use?
+Requires Python 3.9 or newer. FFmpeg is **not** required.
 
-Make sure you have [python](https://www.python.org/ "python") installed in your system.
+From this project directory, install with pipx to make the command available from any directory:
 
-Download this repo and navigate into its directory or follow the below commands (install [git](https://git-scm.com/) first):
-
+```sh
+pipx install .
+jiosaavn-dl --help
 ```
-git clone https://github.com/bunnykek/jiosaavn-dl
+
+If pipx is not installed, install it with your operating system's package manager or `python3 -m pip install --user pipx`, then run `python3 -m pipx ensurepath` and reopen your terminal. On macOS with Homebrew, use `brew install pipx` followed by `pipx ensurepath`.
+
+To get the source first:
+
+```sh
+git clone https://github.com/Pratikkk/jiosaavn-dl.git
 cd jiosaavn-dl
+pipx install .
 ```
 
-use 'pip3' in the below command if 'pip' doesn't work for you. 
-```
-pip install -r requirements.txt
-```
-Use "py" or "python3" if  "python" doesn't  work for you.
-```
-python jiosaavn.py https://www.jiosaavn.com/album/o-saki-saki-from-batla-house/og4DkAosip0_
+The install command uses your local checkout. These changes must be pushed before a fresh clone includes them. The package is not published to PyPI.
+
+### Install without pipx
+
+Use a virtual environment on macOS/Linux:
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install .
+jiosaavn-dl --help
 ```
 
-The files will be save in the ``jiosaavn-dl/Downloads/`` directory
+On Windows (PowerShell):
 
-![cmd](https://github.com/bunnykek/jiosaavn-dl/blob/main/assets/2022-02-02%205m.png "cmd")
-
+```powershell
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install .
+jiosaavn-dl --help
 ```
-General
-Complete name                            : C:\Users\bunny\Desktop\jiosaavn-dl\Downloads\Various Artists - Pathaan [2022]\01. Besharam Rang.m4a
-Format                                   : MPEG-4
-Format profile                           : Base Media
-Codec ID                                 : isom (isom/iso2/mp41)
-File size                                : 10.4 MiB
-Duration                                 : 4 min 18 s
-Overall bit rate mode                    : Constant
-Overall bit rate                         : 337 kb/s
-Album                                    : Pathaan
-Album/Performer                          : Vishal & Shekhar, Shilpa Rao, Caralisa Monteiro, Vishal Dadlani, Shekhar Ravjiani, Kumaar
-Track name                               : Besharam Rang
-Track name/Position                      : 1
-Track name/Total                         : 1
-Performer                                : Vishal & Shekhar, Shilpa Rao, Caralisa Monteiro, Vishal Dadlani, Shekhar Ravjiani, Kumaar
-Composer                                 : Vishal & Shekhar
-Recorded date                            : 2022-12-22
-Copyright                                : © 2022 YRF Music
-Cover                                    : Yes
-Lyrics                                   : Esta Noche La Vida Es Completa / El Esta Es Cuando La Vida Es Virica / Hamein To Loot Liya Milke / Ishq Waalon Ne / Bohot Hi Tang Kiya Ab Tak / Inn Khayalon Ne / Nasha Chadha Jo Sharifi Ka / Utaar Pheka Hai / Besharam Rang Kahan Dekha / Duniyan Waalon Ne / Hamein To Loot Liya Milke / Ishq Waalon Ne / Bohot Hi Tang Kiya Ab Tak / Inn Khayalon Ne / Nasha Chadha Jo Sharifi Ka / Utaar Phenka Hai / Besharam Rang Kahan Dekha / Duniyan Waalon Ne / Mujhmein Nayi Baat Hai / Nayi Aadaton Ke Saath Hai / Mujhmein Nayi Baat Hai / Nayi Aadaton Ke Saath Hai / Hai Jo Sahi Woh Karna Nahin / Ghalat Hone Ki Yehi To Shuruwat Hai / Esta Noche La Vida Es Completa / El Esta Es Cuando La Vida Es Virica / Nasha Chadha Jo Sharifi Ka / Utaar Pheka Hai / Besharam Rang Kahan Dekha / Duniyan Waalon Ne / Hamein To Loot Liya Milke / Ishq Waalon Ne / Bohot Hi Tang Kiya Ab Tak / Inn Khayalon Ne / Esta Noche La Vida / Ishq Waalon Ne, Es Completa / Hamein To Loot Liya Milke / Ishq Waalon Ne / Esta Noche La Vida / Ishq Waalon Ne, Es Completa / 
-Rating                                   : Clean
-Language                                 : Hindi
-Record label                             : YRF Music
-Starring                                 : Shah Rukh Khan, Deepika Padukone, John Abraham
-Singers                                  : Shilpa Rao, Caralisa Monteiro, Vishal Dadlani, Shekhar Ravjiani
 
-Audio
-ID                                       : 1
-Format                                   : AAC LC
-Format/Info                              : Advanced Audio Codec Low Complexity
-Codec ID                                 : mp4a-40-2
-Duration                                 : 4 min 18 s
-Source duration                          : 4 min 18 s
-Source_Duration_LastFrame                : -11 ms
-Bit rate mode                            : Constant
-Bit rate                                 : 332 kb/s
-Channel(s)                               : 2 channels
-Channel layout                           : L R
-Sampling rate                            : 44.1 kHz
-Frame rate                               : 43.066 FPS (1024 SPF)
-Compression mode                         : Lossy
-Stream size                              : 10.2 MiB (99%)
-Source stream size                       : 10.2 MiB (99%)
-Default                                  : Yes
-Alternate group                          : 1
+For Command Prompt, activate with `.venv\Scripts\activate.bat`. Activate the environment again in new terminals, or run `.venv/bin/jiosaavn-dl` (Windows: `.venv\Scripts\jiosaavn-dl.exe`) directly.
+
+To update a pipx installation after pulling new code, run `pipx install --force .`. For a virtual environment installation, rerun `python -m pip install .`. Uninstall with `pipx uninstall jiosaavn-dl` or `python -m pip uninstall jiosaavn-dl`, respectively.
+
+## Usage
+
+Pass a full song, album, or playlist URL. Quote URLs, especially those containing `&` or `?`.
+
+```sh
+jiosaavn-dl 'https://www.jiosaavn.com/album/o-saki-saki-from-batla-house/og4DkAosip0_'
+jiosaavn-dl 'URL' -o ~/Music/JioSaavn
+jiosaavn-dl 'URL_1' 'URL_2' --quality 160
+jiosaavn-dl --input-file urls.txt -o ~/Music/JioSaavn
+jiosaavn-dl 'URL' --no-lyrics --no-cover
+jiosaavn-dl --help
 ```
-### Disclaimer
-- I will not be responsible for how you use jiosaavn-dl.
+
+### Choose your music folder
+
+Save a default download folder once, for example a folder inside your music library:
+
+```sh
+jiosaavn-dl --set-output ~/Music/JioSaavn
+jiosaavn-dl 'URL'
+```
+
+Future downloads go into that folder, even when you run the command from another directory. Use quotes for folder names containing spaces, such as `--set-output "$HOME/Music/My Library"`. On Windows, use `--set-output "C:\Users\YourName\Music\JioSaavn"`.
+
+For a single download, choose a different location with `jiosaavn-dl 'URL' -o /path/to/folder`. This does not change your saved default. Run `jiosaavn-dl --show-output` to see the current destination. New download folders are created when tracks are saved, with album and playlist subfolders inside them.
+
+Settings are saved in `~/Library/Application Support/jiosaavn-dl/config.json` on macOS, `%APPDATA%\jiosaavn-dl\config.json` on Windows, or `~/.config/jiosaavn-dl/config.json` on Linux. `XDG_CONFIG_HOME`, when set, overrides the configuration directory. Without a saved setting, downloads still go to `./Downloads`. Choosing a folder saves audio files there; it does not automatically import them into a music player.
+
+Replace `URL`, `URL_1`, and `URL_2` with actual JioSaavn links. You can mix songs, albums, and playlists in one command.
+
+Supported link forms include:
+
+- Individual songs: `/song/NAME/TOKEN` and older `/s/song/LANGUAGE/NAME/TOKEN` links.
+- Albums: `/album/NAME/TOKEN` and older `/s/album/LANGUAGE/NAME/TOKEN` links.
+- Playlists: `/s/playlist/USER/NAME/TOKEN`, `/playlist/NAME/TOKEN`, and featured lists at `/featured/NAME/TOKEN`.
+- Desktop and mobile JioSaavn hosts, older `saavn.com` hosts, HTTP/HTTPS, and links pasted without `https://`.
+- Shared links with query parameters, fragments, or trailing slashes.
+- `saavn.app.link` and `jiosaavn.app.link` share links that redirect to a supported website URL. If a link only opens an app or landing page, copy the full song/album/playlist URL from the website instead.
+
+For a list of songs or mixed collections, create `urls.txt` with one URL per line:
+
+```text
+# Each album or playlist downloads its tracks
+https://www.jiosaavn.com/song/NAME/SONG_TOKEN
+https://www.jiosaavn.com/album/NAME/ALBUM_TOKEN
+https://www.jiosaavn.com/featured/NAME/PLAYLIST_TOKEN
+```
+
+Blank lines and lines starting with `#` are ignored. Repeat `-i` to read multiple files, combine it with positional URLs, or use `-i -` to read from standard input. Artist, podcast, search, and homepage links are not supported as music collections.
+
+| Option | Behavior |
+| --- | --- |
+| `-i`, `--input-file FILE` | Read URLs from a text file; use `-` for standard input |
+| `-o`, `--output PATH` | Folder for this run; overrides the saved default |
+| `--set-output PATH` | Save a default download folder; can run without a URL |
+| `--show-output` | Show the effective download folder; can run without a URL |
+| `-q`, `--quality KBPS` | Request `12`, `48`, `96`, `160`, or `320` kbps; default `320` |
+| `--timeout SECONDS` | Positive timeout per network request; default `30` |
+| `--overwrite` | Replace existing tracks after a successful download and tagging |
+| `--no-lyrics` | Skip lyrics lookup |
+| `--no-cover` | Skip artwork download and embedding |
+| `-h`, `--help` | Show usage |
+| `--version` | Show installed version |
+
+The service determines which quality is available. Files keep their original AAC audio; the program does not transcode them.
+
+Albums are stored in artist/album folders, and playlists in `Playlist - NAME` folders. Tracks are numbered in collection order. Filenames are sanitized for portability; metadata keeps the original punctuation.
+
+## Reliability and troubleshooting
+
+- Completed, readable M4A files are skipped by default. Use `--overwrite` to refresh their audio or metadata. Empty or invalid existing files are downloaded again.
+- Audio streams into a `.part` file and moves into place only after tagging succeeds. Failed downloads do not replace an existing track. Interrupted temporary files are cleaned up when possible; after a force quit, rerun the same command to retry unfinished tracks.
+- Transient HTTP errors are retried up to three times. Increase `--timeout` for slow connections.
+- Missing optional metadata, lyrics, or artwork does not prevent downloading a track. Artwork is embedded in each track rather than saved as a separate cover file.
+- A failed track does not stop the rest of an album, playlist, or batch. The final summary counts downloaded, skipped, and failed items. Rerun the command to retry failures.
+- Exit codes: `0` for success (including skipped files), `1` if any item failed, `2` for invalid CLI arguments, and `130` when interrupted with Ctrl+C.
+- The playlist request asks for up to 1,000 tracks. If the service reports more tracks than it returns, the CLI prints a warning; it does not paginate larger playlists.
+- Regional restrictions or JioSaavn API changes may make some tracks unavailable. Errors appear in the terminal. If optional lookups fail, try `--no-lyrics --no-cover`.
+
+If the command is not found after a pipx install, run `pipx ensurepath` and reopen your terminal. With a virtual environment, activate it or use the full path to its command. You can also run `python -m jiosaavn` with the Python interpreter where the package is installed.
+
+## Development
+
+Install an editable checkout and run the offline regression suite:
+
+```sh
+python -m pip install -e .
+python -m unittest discover -s tests -v
+```
+
+Build a wheel and source distribution with `python -m pip install build` followed by `python -m build`. Runtime dependencies are maintained in `requirements.txt` and loaded by the package configuration.
+
+Tests mock network calls and use a tiny M4A fixture containing generated silence to verify real metadata tagging. They do not require a JioSaavn account or network access. The fixture was created with:
+
+```sh
+ffmpeg -f lavfi -i anullsrc=r=44100:cl=mono -t 0.1 -c:a aac -map_metadata -1 tests/fixtures/silence.m4a
+```
+
+Use downloads only where you have permission to do so.

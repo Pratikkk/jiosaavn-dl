@@ -1,2 +1,8 @@
-.venv
-Downloads
+.venv/
+Downloads/
+__pycache__/
+*.py[cod]
+*.part
+build/
+dist/
+*.egg-info/
