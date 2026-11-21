@@ -15,7 +15,7 @@ import threading
 import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import NamedTuple, Optional
+from typing import Any, Dict, Generator, Iterable, List, NamedTuple, Optional, Set, Tuple, Union
 from urllib.parse import unquote, urljoin, urlsplit
 
 import requests
@@ -401,7 +401,7 @@ def normalize_date(value):
     return text
 
 
-def _metadata_values(value):
+def _metadata_values(value: Optional[Union[str, List, Tuple, Set, Dict]]) -> Generator[str, None, None]:
     """Yield normalized non-empty strings from a str/list/dict metadata value."""
     if value is None:
         return
@@ -419,12 +419,12 @@ def _metadata_values(value):
         yield text
 
 
-def metadata_list(song, *keys):
+def metadata_list(song: Dict[str, Any], *keys: str) -> List[str]:
     """Collect de-duplicated string values for the given metadata keys."""
     if not isinstance(song, dict):
         return []
-    out = []
-    seen = set()
+    out: List[str] = []
+    seen: Set[str] = set()
     sources = [song]
     more = song.get("more_info")
     if isinstance(more, dict):
@@ -440,7 +440,7 @@ def metadata_list(song, *keys):
     return out
 
 
-def format_lrc_timestamp(seconds):
+def format_lrc_timestamp(seconds: Union[int, float, str]) -> Optional[str]:
     """Format seconds as an LRC timestamp [mm:ss.xx]."""
     try:
         total = max(float(seconds), 0.0)
@@ -459,7 +459,7 @@ def format_lrc_timestamp(seconds):
     return f"[{minutes:02d}:{whole:02d}.{centi:02d}]"
 
 
-def _lyrics_to_lrc(payload):
+def _lyrics_to_lrc(payload: Optional[Union[str, Dict[str, Any]]]) -> Tuple[Optional[str], Optional[str]]:
     """Convert a lyrics payload (plain or synced) to (lrc_text, plain_text)."""
     if payload is None:
         return None, None
@@ -470,8 +470,8 @@ def _lyrics_to_lrc(payload):
         plain = clean_text(re.sub(r"<br\s*/?>", "\n", payload)).strip()
         return None, (plain or None)
 
-    plain = None
-    synced = None
+    plain: Optional[str] = None
+    synced: Optional[str] = None
     if isinstance(payload, dict):
         for key in ("lyrics", "plain_lyrics", "text"):
             val = payload.get(key)
