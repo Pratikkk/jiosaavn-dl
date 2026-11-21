@@ -69,6 +69,8 @@ class RateLimiter:
                     wait_time = needed / self.rate
                     if deadline is not None and time.monotonic() + wait_time > deadline:
                         return False
+                else:
+                    wait_time = tokens / self.rate
             time.sleep(min(0.1, wait_time))
 
 
