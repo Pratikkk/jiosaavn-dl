@@ -504,7 +504,11 @@ def _lyrics_to_lrc(payload):
                             tsf = float(ts)
                         except (TypeError, ValueError):
                             continue
-                        if tsf > 10000:
+                        # Heuristic: if value looks like milliseconds (large integer or > 10000),
+                        # convert to seconds. Also catch values like 5500 (5.5s in ms).
+                        if tsf >= 1000 and tsf == int(tsf):
+                            tsf = tsf / 1000.0
+                        elif tsf > 10000:
                             tsf = tsf / 1000.0
                         stamp = format_lrc_timestamp(tsf)
                         if not stamp:
@@ -2100,7 +2104,19 @@ class Jiosaavn:
                 if self.save_lyrics_file and (lrc_text or lyrics_text):
                     lrc_path = song_path.with_suffix(".lrc")
                     try:
-                        lrc_path.write_text(lrc_text or lyrics_text, encoding="utf-8")
+                        # Build LRC content with metadata tags for Poweramp compatibility
+                        lrc_content = []
+                        # Add metadata tags if we have the info
+                        if title:
+                            lrc_content.append(f"[ti:{title}]")
+                        if artists:
+                            lrc_content.append(f"[ar:{artists}]")
+                        if album:
+                            lrc_content.append(f"[al:{album}]")
+                        lrc_content.append("[by:jiosaavn-dl]")
+                        lrc_content.append("")  # empty line before lyrics
+                        lrc_content.append(lrc_text or lyrics_text)
+                        lrc_path.write_text("\n".join(lrc_content), encoding="utf-8")
                     except OSError as exc:
                         self._warning(f"  Warning: Could not save lyrics file: {exc}")
             except Exception as exc:
