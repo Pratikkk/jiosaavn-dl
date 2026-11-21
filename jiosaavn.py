@@ -35,6 +35,9 @@ from jiosaavn_core import (
     normalize_genre,
     normalized_url,
     parse_url,
+    red,
+    render_template,
+    reset_config,
     resolve_url,
     safe_name,
     save_config,
@@ -698,7 +701,7 @@ def main(argv=None):
                             print(f"  Error: {exc}")
                     else:
                         print(f"  Skipped: {result['kind']} (only songs supported)")
-            return 0
+                return 0
 
             if not urls:
                 raise DownloadError("The input lists contain no URLs.")
