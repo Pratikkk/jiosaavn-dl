@@ -529,7 +529,7 @@ def _lyrics_to_lrc(payload: Optional[Union[str, Dict[str, Any]]]) -> Tuple[Optio
     return synced, plain
 
 
-def _truncate_utf8(value, max_bytes):
+def _truncate_utf8(value: str, max_bytes: int) -> str:
     """Return the longest prefix of `value` that fits in `max_bytes`."""
     encoded = value.encode("utf-8")
     if len(encoded) <= max_bytes:
@@ -537,7 +537,7 @@ def _truncate_utf8(value, max_bytes):
     return encoded[:max_bytes].decode("utf-8", "ignore")
 
 
-def safe_name(value, fallback="Unknown", max_bytes=255):
+def safe_name(value: str, fallback: str = "Unknown", max_bytes: int = 255) -> str:
     # Keep each component portable, bounded, and inside the output directory.
     value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", clean_text(value))
     value = sanitize(value).strip(" .")
@@ -560,7 +560,7 @@ TEMPLATE_PLACEHOLDERS = frozenset((
 _TEMPLATE_PATTERN = re.compile(r"\{(?P<name>[a-zA-Z_][a-zA-Z0-9_]*)(?::(?P<fmt>[^}]*))?\}")
 
 
-def render_template(template, values):
+def render_template(template: str, values: Dict[str, Any]) -> str:
         """Substitute `{placeholder}` fields in `template`.
 
         `values` maps a placeholder name to its replacement. A `:format` suffix
@@ -569,7 +569,7 @@ def render_template(template, values):
         A placeholder that maps to None is treated as unavailable, so a missing
         field (for example `{playlist}` for a single song) also fails loudly.
         """
-        def replace(match):
+        def replace(match: re.Match) -> str:
             name = match.group("name")
             if name not in TEMPLATE_PLACEHOLDERS:
                 raise DownloadError(f"Unknown template placeholder {{{name}}}")
@@ -584,7 +584,7 @@ def render_template(template, values):
         return _TEMPLATE_PATTERN.sub(replace, template)
 
 
-def normalized_url(url):
+def normalized_url(url: str) -> str:
     url = unescape(url.strip())
     if "://" not in url:
         url = "https://" + url
@@ -596,7 +596,7 @@ def normalized_url(url):
     return url
 
 
-def parse_url(url):
+def parse_url(url: str) -> Tuple[str, str]:
     """Return (kind, token) for supported public JioSaavn URLs."""
     parts = urlsplit(normalized_url(url))
     segments = parts.path.strip("/").split("/")
@@ -618,13 +618,13 @@ def parse_url(url):
     return kind, token
 
 
-def resolve_url(url, client):
+def resolve_url(url: str, client: "Jiosaavn") -> Tuple[str, str]:
     url = normalized_url(url)
     if urlsplit(url).hostname not in SHORT_HOSTS:
         return parse_url(url)
     # App sharing links require a redirect to reveal the collection type/token.
     # Follow only recognized hosts, with a bound independent of Session defaults.
-    visited = set()
+    visited: Set[str] = set()
     for _ in range(6):
         if url in visited:
             raise DownloadError("Redirect loop detected in share link. Copy its full website URL instead.")
@@ -641,7 +641,7 @@ def resolve_url(url, client):
     raise DownloadError("Too many redirects in the share link. Copy its full website URL instead.")
 
 
-def save_failed_urls(path, failures):
+def save_failed_urls(path: Union[str, Path], failures: List[Any]) -> int:
     """Write the URLs of failed items to `path` so `-i path` can retry them.
 
     Returns how many URLs were written. With nothing to retry, a file written
@@ -672,7 +672,7 @@ def save_failed_urls(path, failures):
 _ANSI_CSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
-def display_width(text):
+def display_width(text: str) -> int:
     """Approximate number of terminal columns `text` occupies.
 
     ANSI CSI escape sequences are ignored. Wide and ambiguous-width characters
@@ -710,7 +710,7 @@ def display_width(text):
     return width
 
 
-def fit_width(text, width):
+def fit_width(text: str, width: int) -> str:
     """Cut `text` with an ellipsis so it takes at most `width` columns.
 
     ANSI CSI escape sequences are preserved and never split. A reset sequence
@@ -723,7 +723,7 @@ def fit_width(text, width):
     ellipsis = "…"
     ellipsis_width = 2 if unicodedata.east_asian_width(ellipsis) in ("W", "F", "A") else 1
     target = max(width - ellipsis_width, 0)
-    kept = []
+    kept: List[str] = []
     used = 0
     truncated = False
     i = 0
@@ -766,7 +766,7 @@ def fit_width(text, width):
     return result
 
 
-def is_true(value):
+def is_true(value: Any) -> bool:
     return str(value).lower() in ("1", "true", "yes")
 
 
