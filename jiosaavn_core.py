@@ -25,6 +25,53 @@ from sanitize_filename import sanitize
 from mutagen import MutagenError
 from mutagen.mp4 import MP4, MP4Cover
 
+
+class RateLimiter:
+    """Token bucket rate limiter for API requests."""
+
+    def __init__(self, rate: float = 10.0, burst: int = 5):
+        """
+        Initialize rate limiter.
+
+        Args:
+            rate: Requests per second (sustained rate)
+            burst: Maximum burst size
+        """
+        self.rate = rate
+        self.burst = burst
+        self.tokens = float(burst)
+        self.last_update = time.monotonic()
+        self.lock = threading.Lock()
+
+    def acquire(self, tokens: int = 1, timeout: Optional[float] = None) -> bool:
+        """
+        Acquire tokens from the bucket.
+
+        Args:
+            tokens: Number of tokens to acquire
+            timeout: Maximum time to wait in seconds (None = wait forever)
+
+        Returns:
+            True if tokens acquired, False if timeout
+        """
+        deadline = time.monotonic() + timeout if timeout is not None else None
+        while True:
+            with self.lock:
+                now = time.monotonic()
+                elapsed = now - self.last_update
+                self.tokens = min(self.burst, self.tokens + elapsed * self.rate)
+                self.last_update = now
+                if self.tokens >= tokens:
+                    self.tokens -= tokens
+                    return True
+                if timeout is not None:
+                    needed = tokens - self.tokens
+                    wait_time = needed / self.rate
+                    if deadline is not None and time.monotonic() + wait_time > deadline:
+                        return False
+            time.sleep(min(0.1, wait_time))
+
+
 class _RetryWithRetryAfter(Retry):
     """Retry class that respects Retry-After header for 429 responses."""
     def increment(self, method, url, response=None, _pool=None, _stacktrace=None):
@@ -240,6 +287,8 @@ def load_config() -> Dict[str, Any]:
         "cache_ttl": 86400,
         "progress_style": "auto",
         "no_unicode": False,
+        "prefetch_rate": 5.0,
+        "prefetch_burst": 3,
     }
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -778,7 +827,7 @@ class Jiosaavn:
                  incremental=False, fallback_qualities=None, save_lyrics_file=False,
                  save_cover_file=False, post_hook=None, no_explicit=False,
                  after_year=None, before_year=None, progress_style="single",
-                 cache=False, cache_ttl=86400):
+                 cache=False, cache_ttl=86400, prefetch_rate=5.0, prefetch_burst=3):
         self.output = Path(output).expanduser()
         self.genre = normalize_genre(genre)
         self.workers = max(1, min(int(workers), MAX_WORKERS))
@@ -791,7 +840,7 @@ class Jiosaavn:
         self.verbose = verbose
         self.dry_run = dry_run
         self.template = template
-        self.max_speed = max_speed  # bytes/sec, None = unlimited
+        self.max_speed = max_speed
         self.proxy = proxy
         self.incremental = incremental
         self.fallback_qualities = fallback_qualities or []
@@ -807,6 +856,9 @@ class Jiosaavn:
             self.cache_ttl = max(int(cache_ttl), 0)
         except (TypeError, ValueError):
             self.cache_ttl = 86400
+        # Prefetch rate limiting
+        self.prefetch_rate = max(float(prefetch_rate), 0.1)
+        self.prefetch_burst = max(int(prefetch_burst), 1)
         # Auto-adjust for Termux/narrow terminals
         self._is_termux = is_termux()
         self._is_narrow = is_narrow_terminal()
@@ -862,6 +914,8 @@ class Jiosaavn:
         self._cdn_url_cache = {}
         self._cover_cache = {}
         self._lyrics_cache = {}
+        # Rate limiter for prefetch API requests (avoid bursts)
+        self._prefetch_rate_limiter = RateLimiter(rate=self.prefetch_rate, burst=self.prefetch_burst)
         # Optional persistent on-disk cache (TTL, opt-in).
         self._disk_cache_db_lock = threading.Lock()
         self._disk_cache_db = None
@@ -2506,6 +2560,10 @@ class Jiosaavn:
                 with self._cache_lock:
                     self._cover_cache[cover_url] = artwork
             else:
+                # Rate limit the API request
+                if not self._prefetch_rate_limiter.acquire(timeout=30.0):
+                    self._warning(f"  Warning: cover fetch rate limited")
+                    return None
                 try:
                     with self.request(cover_url) as response:
                         artwork = response.content
@@ -2538,6 +2596,12 @@ class Jiosaavn:
         if hit and isinstance(cached, (list, tuple)) and len(cached) == 2:
             with self._cache_lock:
                 self._lyrics_cache.setdefault(lyrics_id, (cached[0], cached[1]))
+            return
+        # Rate limit the API request
+        if not self._prefetch_rate_limiter.acquire(timeout=30.0):
+            self._warning(f"  Warning: lyrics fetch rate limited")
+            with self._cache_lock:
+                self._lyrics_cache.setdefault(lyrics_id, (None, None))
             return
         try:
             lyrics = self.api("lyrics.getLyrics", lyrics_id=lyrics_id, api_version="4")

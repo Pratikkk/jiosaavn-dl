@@ -248,6 +248,8 @@ def build_parser():
                 "proxy": None,
                 "cache": False,
                 "cache_ttl": 86400,
+                "prefetch_rate": 5.0,
+                "prefetch_burst": 3,
             }
         parser = argparse.ArgumentParser(
             prog="jiosaavn-dl",
@@ -340,6 +342,10 @@ def build_parser():
                             help="cache API metadata, cover art, and lyrics on disk")
         parser.add_argument("--cache-ttl", type=positive_cache_ttl, default=cfg["cache_ttl"],
                             metavar="SECONDS", help="on-disk cache TTL in seconds")
+        parser.add_argument("--prefetch-rate", type=float, default=cfg.get("prefetch_rate", 5.0),
+                            metavar="REQ/s", help="prefetch API request rate limit (requests per second)")
+        parser.add_argument("--prefetch-burst", type=int, default=cfg.get("prefetch_burst", 3),
+                            metavar="N", help="prefetch API burst allowance")
 
         output_group = parser.add_mutually_exclusive_group()
         output_group.add_argument("--quiet", action="store_true",
@@ -370,7 +376,8 @@ def config_set(key, value):
             valid_keys = {"output", "quality", "workers", "genre", "template",
                           "overwrite", "no_lyrics", "no_cover", "timeout",
                           "max_speed", "proxy", "cache", "cache_ttl",
-                          "progress_style", "no_unicode"}
+                          "progress_style", "no_unicode",
+                          "prefetch_rate", "prefetch_burst"}
             if key not in valid_keys:
                 print(f"Unknown config key: {key}. Valid keys: {', '.join(sorted(valid_keys))}", file=sys.stderr)
                 return 2
@@ -426,6 +433,16 @@ def config_set(key, value):
                     value = False
                 else:
                     print(f"Boolean value expected for {key} (true/false)", file=sys.stderr)
+                    return 2
+            elif key == "prefetch_rate":
+                value = float(value)
+                if value <= 0:
+                    print("prefetch_rate must be a positive number", file=sys.stderr)
+                    return 2
+            elif key == "prefetch_burst":
+                value = int(value)
+                if value <= 0:
+                    print("prefetch_burst must be a positive integer", file=sys.stderr)
                     return 2
             save_config(**{key: value})
             print(f"Config saved: {key} = {value}")
@@ -627,7 +644,9 @@ def main(argv=None):
                           before_year=args.before_year,
                           progress_style=progress_style,
                           cache=args.cache,
-                          cache_ttl=args.cache_ttl)
+                          cache_ttl=args.cache_ttl,
+                          prefetch_rate=args.prefetch_rate,
+                          prefetch_burst=args.prefetch_burst)
         # Disable colors/unicode if requested
         if args.no_unicode:
             Colors.disable()
