@@ -23,6 +23,7 @@ from jiosaavn_core import (
     SITE_HOSTS,
     TEMPLATE_PLACEHOLDERS,
     __version__,
+    _lyrics_to_lrc,
     blue,
     clean_text,
     config_path,
@@ -34,9 +35,6 @@ from jiosaavn_core import (
     normalize_genre,
     normalized_url,
     parse_url,
-    red,
-    render_template,
-    reset_config,
     resolve_url,
     safe_name,
     save_config,
@@ -304,6 +302,10 @@ def build_parser():
         parser.add_argument("--save-lyrics-file", action="store_true",
                             help="save lyrics alongside the audio as a .lrc file "
                                  "(synchronized/LRC when available, otherwise plain text)")
+        parser.add_argument("--lyrics-only", action="store_true",
+                            help="fetch and save lyrics only, without downloading audio")
+        parser.add_argument("--lyrics-format", choices=("lrc", "txt", "both"), default="lrc",
+                            help="lyrics output format: 'lrc' (synced LRC), 'txt' (plain text), or 'both'")
         parser.add_argument("--save-cover-file", action="store_true",
                             help="save cover art as folder.jpg in the album/playlist folder")
         parser.add_argument("--parallel-urls", type=int, default=1, metavar="N",
@@ -328,6 +330,9 @@ def build_parser():
                             help="number of search results to consider (default 10)")
         parser.add_argument("--search-type", choices=("song", "album", "playlist", "all"),
                             default="all", help="type of results to search for")
+        parser.add_argument("--pick", metavar="SELECTOR",
+                            help="select search results by number, range, or list (e.g. 1, 1-3, 1,3,5, or all). "
+                                 "Required when --search returns results.")
         parser.add_argument("--cache", action=argparse.BooleanOptionalAction, default=cfg["cache"],
                             help="cache API metadata, cover art, and lyrics on disk")
         parser.add_argument("--cache-ttl", type=positive_cache_ttl, default=cfg["cache_ttl"],
@@ -578,7 +583,7 @@ def main(argv=None):
             print("Error: --interactive requires an interactive terminal (stdin must be a TTY).",
                   file=sys.stderr)
             return 2
-        if not args.urls and not args.input_file and not args.interactive and args.set_output is None and not args.show_output:
+        if not args.urls and not args.input_file and not args.interactive and not args.search and args.set_output is None and not args.show_output:
             parser.error("provide at least one URL or --input-file")
         try:
             default_output = save_output(args.set_output) if args.set_output is not None else None
@@ -633,27 +638,67 @@ def main(argv=None):
             else:
                 urls = list(input_urls(args.urls, args.input_file))
 
-            # Handle search and download
-            if args.search:
+            # Handle lyrics-only mode (fetch and save lyrics without downloading audio)
+            if args.lyrics_only:
+                if not args.search:
+                    print("Error: --lyrics-only requires --search", file=sys.stderr)
+                    return 2
                 search_results = client.search(args.search, limit=args.search_limit)
-                # Filter by type if specified
                 if args.search_type != "all":
                     search_results = [r for r in search_results if r["kind"] == args.search_type]
                 if not search_results:
                     print(f"No {args.search_type} results found for: {args.search}")
-                else:
-                    print(f"Found {len(search_results)} {args.search_type} result(s) for: {args.search}")
-                    for i, result in enumerate(search_results, 1):
-                        print(f"  {i}. [{result['kind']}] {result['title']} — {result['subtitle']}")
-                    # Ask for confirmation unless in non-interactive mode
-                    if not args.interactive and sys.stdin.isatty():
-                        confirm = input("Download these? [y/N]: ").strip().lower()
-                        if confirm not in ("y", "yes"):
-                            print("Cancelled.")
-                            return 0
-                    # Add search result URLs to download queue
-                    for result in search_results:
-                        urls.append(result["url"])
+                    return 0
+                print(f"Found {len(search_results)} {args.search_type} result(s) for: {args.search}")
+                for i, result in enumerate(search_results, 1):
+                    print(f"  {i}. [{result['kind']}] {result['title']} — {result['subtitle']}")
+                if not sys.stdin.isatty():
+                    print("Error: --lyrics-only requires interactive terminal for selection", file=sys.stderr)
+                    return 2
+                confirm = input("Fetch lyrics for these? [y/N]: ").strip().lower()
+                if confirm not in ("y", "yes"):
+                    print("Cancelled.")
+                    return 0
+                for i, result in enumerate(search_results, 1):
+                    if i > 1:
+                        print()
+                    kind, token = resolve_url(result["url"], client)
+                    if kind == "song":
+                        print(f"\nFetching lyrics for: {result['title']} — {result['subtitle']}")
+                        try:
+                            # Use the existing processTrack logic but only for lyrics
+                            kind, token = resolve_url(result["url"], client)
+                            metadata = client.metadata("song", token)
+                            if "song" in metadata:
+                                song = metadata
+                            else:
+                                candidates = metadata.get("songs")
+                                if not isinstance(candidates, list):
+                                    candidates = metadata.values()
+                                song = next((value for value in candidates
+                                             if isinstance(value, dict) and "song" in value), None)
+                            if song:
+                                lyrics_id = song.get("id")
+                                if lyrics_id:
+                                    lyrics = client.api("lyrics.getLyrics", lyrics_id=lyrics_id, api_version="4")
+                                    if lyrics.get("lyrics"):
+                                        lrc_text, lyrics_text = _lyrics_to_lrc(lyrics)
+                                        if lrc_text:
+                                            lrc_path = Path(".") / f"{result['title']} - {result['subtitle']}.lrc"
+                                            lrc_content = [f"[ti:{result['title']}]", f"[ar:{result['subtitle']}]", f"[al:{result.get('album', '')}]", "", lrc_text]
+                                            Path(".").joinpath(f"{result['title']} - {result['subtitle']}.lrc").write_text("\n".join(lrc_content), encoding="utf-8")
+                                            print(f"  Saved: {result['title']} - {result['subtitle']}.lrc")
+                                        elif lyrics_text := lyrics.get("lyrics"):
+                                            lyrics_text = clean_text(re.sub(r"<br\s*/?>", "\n", lyrics)).strip()
+                                            Path(".").joinpath(f"{result['title']} - {result['subtitle']}.txt").write_text(lyrics_text, encoding="utf-8")
+                                            print(f"  Saved: {result['title']} - {result['subtitle']}.txt")
+                                        else:
+                                            print("  No lyrics available")
+                        except DownloadError as exc:
+                            print(f"  Error: {exc}")
+                    else:
+                        print(f"  Skipped: {result['kind']} (only songs supported)")
+            return 0
 
             if not urls:
                 raise DownloadError("The input lists contain no URLs.")
