@@ -128,13 +128,6 @@ class Colors:
     def bold(cls, text): return cls.colorize(text, cls.BOLD)
     @classmethod
     def dim(cls, text): return cls.colorize(text, cls.DIM)
-    def cyan(cls, text): return cls.colorize(text, cls.CYAN)
-    @classmethod
-    def gray(cls, text): return cls.colorize(text, cls.GRAY)
-    @classmethod
-    def bold(cls, text): return cls.colorize(text, cls.BOLD)
-    @classmethod
-    def dim(cls, text): return cls.colorize(text, cls.DIM)
 
 
 class Spinner:
