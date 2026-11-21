@@ -3,6 +3,7 @@
 
 import argparse
 import math
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -95,6 +96,16 @@ def genre_text(value):
     if genre is None:
         raise argparse.ArgumentTypeError("genre cannot be blank")
     return genre
+
+
+def positive_cache_ttl(value):
+    try:
+        number = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("cache-ttl must be a positive integer (seconds)") from exc
+    if number <= 0:
+        raise argparse.ArgumentTypeError("cache-ttl must be a positive integer (seconds)")
+    return number
 
 
 def speed_limit(value):
@@ -234,6 +245,8 @@ def build_parser():
                 "timeout": 30,
                 "max_speed": None,
                 "proxy": None,
+                "cache": False,
+                "cache_ttl": 86400,
             }
         parser = argparse.ArgumentParser(
             prog="jiosaavn-dl",
@@ -295,8 +308,10 @@ def build_parser():
                             help="save cover art as folder.jpg in the album/playlist folder")
         parser.add_argument("--parallel-urls", type=int, default=1, metavar="N",
                             help="process multiple URLs concurrently (1-4, default 1)")
-        parser.add_argument("--progress-style", choices=("single", "detailed", "compact", "pulse"), default="compact",
-                            help="progress display style: 'single' (single line), 'detailed' (multi-line per track), 'compact' (concise with active downloads, default), or 'pulse' (yt-dlp style with Unicode bars)")
+        parser.add_argument("--progress-style", choices=("auto", "single", "detailed", "compact", "pulse", "minimal"), default="auto",
+                            help="progress display style: 'auto' (detect best for terminal), 'single' (single line), 'detailed' (multi-line per track), 'compact' (concise with active downloads), 'pulse' (yt-dlp style with Unicode bars), or 'minimal' (ASCII-only, Termux-friendly)")
+        parser.add_argument("--no-unicode", action="store_true",
+                            help="force ASCII-only progress output (disables Unicode bars and colors)")
         parser.add_argument("--force-progress", action="store_true",
                             help="force progress bar display even when stderr is not a TTY")
         parser.add_argument("--post-hook", metavar="CMD",
@@ -313,6 +328,10 @@ def build_parser():
                             help="number of search results to consider (default 10)")
         parser.add_argument("--search-type", choices=("song", "album", "playlist", "all"),
                             default="all", help="type of results to search for")
+        parser.add_argument("--cache", action=argparse.BooleanOptionalAction, default=cfg["cache"],
+                            help="cache API metadata, cover art, and lyrics on disk")
+        parser.add_argument("--cache-ttl", type=positive_cache_ttl, default=cfg["cache_ttl"],
+                            metavar="SECONDS", help="on-disk cache TTL in seconds")
 
         output_group = parser.add_mutually_exclusive_group()
         output_group.add_argument("--quiet", action="store_true",
@@ -342,7 +361,8 @@ def config_set(key, value):
             # Validate key
             valid_keys = {"output", "quality", "workers", "genre", "template",
                           "overwrite", "no_lyrics", "no_cover", "timeout",
-                          "max_speed", "proxy", "cache", "cache_ttl"}
+                          "max_speed", "proxy", "cache", "cache_ttl",
+                          "progress_style", "no_unicode"}
             if key not in valid_keys:
                 print(f"Unknown config key: {key}. Valid keys: {', '.join(sorted(valid_keys))}", file=sys.stderr)
                 return 2
@@ -387,6 +407,18 @@ def config_set(key, value):
             elif key == "proxy":
                 if value.lower() in ("none", ""):
                     value = None
+            elif key == "progress_style":
+                if value not in ("auto", "single", "detailed", "compact", "pulse", "minimal"):
+                    print("progress_style must be: auto, single, detailed, compact, pulse, or minimal", file=sys.stderr)
+                    return 2
+            elif key == "no_unicode":
+                if value.lower() in ("true", "1", "yes", "on"):
+                    value = True
+                elif value.lower() in ("false", "0", "no", "off"):
+                    value = False
+                else:
+                    print(f"Boolean value expected for {key} (true/false)", file=sys.stderr)
+                    return 2
             save_config(**{key: value})
             print(f"Config saved: {key} = {value}")
         except (DownloadError, OSError, ValueError, argparse.ArgumentTypeError) as exc:
@@ -428,11 +460,35 @@ def handle_config(argv):
         return handler()
 
 
+def _playlist_track_relpath(client, song, playlist_name, pos, playlist_dir):
+    """Compute the relative path of a playlist track matching processTrack."""
+    song_id = "Unknown"
+    perma_url = song.get("perma_url")
+    if isinstance(perma_url, str) and perma_url.strip():
+        try:
+            _kind, song_id = parse_url(perma_url)
+        except DownloadError:
+            song_id = clean_text(song.get("id")) or "Unknown"
+    elif song.get("id"):
+        song_id = clean_text(song.get("id"))
+
+    title = clean_text(song.get("song")) or song_id
+    artists = clean_text(song.get("primary_artists")) or "Unknown Artist"
+    folder = client._template_folder(song, artists, f"Playlist - {playlist_name}", pos)
+    prefix = f"{pos:02d}. "
+    suffix = ".m4a"
+    partial_suffix = f".{client.quality}.part"
+    safe_title = safe_name(
+        title,
+        max_bytes=255 - len((prefix + suffix + partial_suffix).encode("utf-8")),
+    )
+    track_path = (client.output / folder / f"{prefix}{safe_title}{suffix}").resolve()
+    rel = os.path.relpath(track_path, start=playlist_dir.resolve())
+    return rel.replace(os.sep, "/")
+
+
 def export_playlist(client, playlist_token, format_type, output_dir):
     """Export a playlist to M3U/M3U8/PLS format."""
-    from pathlib import Path
-    import urllib.parse
-
     try:
         data = client.metadata("playlist", playlist_token)
     except DownloadError as exc:
@@ -446,29 +502,25 @@ def export_playlist(client, playlist_token, format_type, output_dir):
         print("Warning: No tracks in playlist to export")
         return
 
-    # Sanitize playlist name for filename
-    safe_name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip(". ")
-    if not safe_name:
-        safe_name = "playlist"
-
-    # Determine file extension
-    ext = format_type if format_type != "m3u8" else "m3u"
-    playlist_file = Path(output_dir) / f"{safe_name}.{ext}"
+    playlist_name = safe_name(name, fallback="playlist")
+    playlist_dir = Path(output_dir).expanduser()
+    playlist_dir.mkdir(parents=True, exist_ok=True)
+    playlist_file = playlist_dir / f"{playlist_name}.{format_type}"
 
     try:
         if format_type in ("m3u", "m3u8"):
-            _export_m3u(playlist_file, songs, name)
+            _export_m3u(client, playlist_file, songs, name)
         elif format_type == "pls":
-            _export_pls(playlist_file, songs, name)
+            _export_pls(client, playlist_file, songs, name)
         print(f"Exported playlist to {playlist_file}")
     except OSError as exc:
         print(f"Warning: Could not write playlist file: {exc}", file=sys.stderr)
 
 
-def _export_m3u(path, songs, playlist_name):
+def _export_m3u(client, path, songs, playlist_name):
     """Export playlist to M3U/M3U8 format."""
     lines = ["#EXTM3U", f"#PLAYLIST:{playlist_name}"]
-    for song in songs:
+    for pos, song in enumerate(songs, 1):
         title = clean_text(song.get("song", "Unknown"))
         artist = clean_text(song.get("primary_artists", "Unknown Artist"))
         duration = song.get("duration", "0")
@@ -476,18 +528,16 @@ def _export_m3u(path, songs, playlist_name):
             duration = int(duration)
         except (ValueError, TypeError):
             duration = 0
-        # Find the actual file path
-        # This is a simplified approach - in reality we'd need to track downloaded files
-        # For now, use a placeholder
+        rel_path = _playlist_track_relpath(client, song, playlist_name, pos, path.parent)
         lines.append(f"#EXTINF:{duration},{artist} - {title}")
-        lines.append(f"{title} - {artist}.m4a")  # Placeholder
+        lines.append(rel_path)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _export_pls(path, songs, playlist_name):
+def _export_pls(client, path, songs, playlist_name):
     """Export playlist to PLS format."""
     lines = ["[playlist]", f"NumberOfEntries={len(songs)}", f"Title={playlist_name}"]
-    for i, song in enumerate(songs, 1):
+    for pos, song in enumerate(songs, 1):
         title = clean_text(song.get("song", "Unknown"))
         artist = clean_text(song.get("primary_artists", "Unknown Artist"))
         duration = song.get("duration", "0")
@@ -495,9 +545,10 @@ def _export_pls(path, songs, playlist_name):
             duration = int(duration)
         except (ValueError, TypeError):
             duration = -1
-        lines.append(f"File{i}={title} - {artist}.m4a")
-        lines.append(f"Title{i}={artist} - {title}")
-        lines.append(f"Length{i}={duration}")
+        rel_path = _playlist_track_relpath(client, song, playlist_name, pos, path.parent)
+        lines.append(f"File{pos}={rel_path}")
+        lines.append(f"Title{pos}={artist} - {title}")
+        lines.append(f"Length{pos}={duration}")
     lines.append("Version=2")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -549,6 +600,10 @@ def main(argv=None):
             return 1
         if not args.urls and not args.input_file and not args.interactive and not args.search:
             return 0
+        # Handle progress style: "auto" means auto-detect best for terminal
+        # (handled in Jiosaavn.__init__)
+        progress_style = args.progress_style
+        
         client = Jiosaavn(output, args.quality, args.timeout, args.overwrite,
                           not args.no_lyrics, not args.no_cover,
                           quiet=args.quiet, verbose=args.verbose, dry_run=args.dry_run,
@@ -562,7 +617,12 @@ def main(argv=None):
                           no_explicit=args.no_explicit,
                           after_year=args.after_year,
                           before_year=args.before_year,
-                          progress_style=args.progress_style)
+                          progress_style=progress_style,
+                          cache=args.cache,
+                          cache_ttl=args.cache_ttl)
+        # Disable colors/unicode if requested
+        if args.no_unicode:
+            Colors.disable()
         client.progress_enabled = not args.quiet and (sys.stderr.isatty() or args.force_progress)
         saved_failed = 0
         try:

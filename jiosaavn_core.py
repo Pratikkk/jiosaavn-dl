@@ -43,6 +43,28 @@ class _RetryWithRetryAfter(Retry):
                 return new_retry.increment(method, url, response, _pool, _stacktrace)
         return super().increment(method, url, response, _pool, _stacktrace)
 
+
+def is_termux() -> bool:
+    """Detect if running in Termux on Android."""
+    # Check multiple indicators for Termux
+    if os.environ.get("TERMUX_VERSION"):
+        return True
+    if os.environ.get("ANDROID_ROOT") and "com.termux" in os.environ.get("PREFIX", ""):
+        return True
+    if os.environ.get("PREFIX", "").startswith("/data/data/com.termux"):
+        return True
+    return False
+
+
+def is_narrow_terminal(threshold: int = 60) -> bool:
+    """Check if terminal is narrow (e.g., mobile/Termux)."""
+    try:
+        cols = shutil.get_terminal_size((80, 24)).columns
+        return cols < threshold
+    except Exception:
+        return False
+
+
 # ANSI color codes
 class Colors:
     """ANSI color codes for terminal output."""
@@ -98,6 +120,15 @@ class Colors:
     @classmethod
     def blue(cls, text): return cls.colorize(text, cls.BLUE)
     @classmethod
+    def magenta(cls, text): return cls.colorize(text, cls.MAGENTA)
+    @classmethod
+    def cyan(cls, text): return cls.colorize(text, cls.CYAN)
+    @classmethod
+    def gray(cls, text): return cls.colorize(text, cls.GRAY)
+    @classmethod
+    def bold(cls, text): return cls.colorize(text, cls.BOLD)
+    @classmethod
+    def dim(cls, text): return cls.colorize(text, cls.DIM)
     def cyan(cls, text): return cls.colorize(text, cls.CYAN)
     @classmethod
     def gray(cls, text): return cls.colorize(text, cls.GRAY)
@@ -215,6 +246,8 @@ def load_config():
         "proxy": None,
         "cache": False,
         "cache_ttl": 86400,
+        "progress_style": "auto",
+        "no_unicode": False,
     }
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -778,6 +811,21 @@ class Jiosaavn:
             self.cache_ttl = max(int(cache_ttl), 0)
         except (TypeError, ValueError):
             self.cache_ttl = 86400
+        # Auto-adjust for Termux/narrow terminals
+        self._is_termux = is_termux()
+        self._is_narrow = is_narrow_terminal()
+        # If "auto" or user explicitly chose a style that may not work well on
+        # Termux/narrow terminals, switch to minimal
+        if progress_style == "auto":
+            if self._is_termux or self._is_narrow:
+                self.progress_style = "minimal"
+            else:
+                self.progress_style = "compact"
+        elif self._is_termux or self._is_narrow:
+            # On Termux/narrow terminals, use minimal style by default
+            # unless user explicitly requested a different style
+            if progress_style in ("compact", "pulse", "detailed", "single"):
+                self.progress_style = "minimal"
         self.progress_enabled = False
         self._progress_lock = threading.Lock()
         self._progress_total = 0
@@ -888,6 +936,8 @@ class Jiosaavn:
             self._write_compact_progress()
         elif self.progress_style == "pulse":
             self._write_pulse_progress()
+        elif self.progress_style == "minimal":
+            self._write_minimal_progress()
         else:
             self._write_single_progress()
 
@@ -926,6 +976,63 @@ class Jiosaavn:
             line += " " + ", ".join(
                 f"{pos:02d} {self._active_amount[pos] + ' ' if pos in self._active_amount else ''}{title}"
                 for pos, title in sorted(self._active_titles.items()))
+        columns = shutil.get_terminal_size((80, 24)).columns
+        sys.stderr.write("\r\033[K" + fit_width(line, columns - 1))
+        sys.stderr.flush()
+
+    def _write_minimal_progress(self):
+        """Redraw the minimal progress display (ASCII-only, single line).
+        
+        Optimized for Termux/narrow terminals. Uses only ASCII characters,
+        no cursor movement, and minimal width.
+        """
+        elapsed = max(0, int(time.monotonic() - self._collection_started_at))
+        hours, remainder = divmod(elapsed, 3600)
+        minutes, seconds = divmod(remainder, 60)
+
+        total = max(self._progress_total, 1)
+        pct = self._progress_done * 100 // total
+        
+        # Build a compact ASCII progress bar
+        bar_width = 10
+        filled = int(bar_width * self._progress_done / total)
+        bar = "[" + "=" * filled + " " * (bar_width - filled) + "]"
+        
+        # Minimal status line
+        progress_text = f"{self._progress_done}/{self._progress_total} ({pct}%)"
+        elapsed_text = f"{hours}:{minutes:02d}:{seconds:02d}"
+        
+        # ETA
+        remaining = self._progress_total - self._progress_done
+        eta_text = ""
+        if self._progress_done >= 2 and remaining > 0:
+            eta = int(elapsed * remaining / self._progress_done)
+            eta_hours, eta_remainder = divmod(eta, 3600)
+            eta_minutes, eta_seconds = divmod(eta_remainder, 60)
+            if eta_hours:
+                eta_text = f" ETA {eta_hours}h{eta_minutes}m"
+            elif eta_minutes:
+                eta_text = f" ETA {eta_minutes}m{eta_seconds}s"
+            else:
+                eta_text = f" ETA {eta_seconds}s"
+        
+        # Active track info (just the first one if any)
+        active_info = ""
+        if self._active_titles:
+            first_pos = min(self._active_titles.keys())
+            title = self._active_titles[first_pos]
+            amount = self._active_amount.get(first_pos, "")
+            if amount:
+                active_info = f" | {amount} {title}"
+            else:
+                active_info = f" | {title}"
+            # Truncate if too long
+            max_title_len = 30
+            if len(active_info) > max_title_len:
+                active_info = active_info[:max_title_len - 3] + "..."
+        
+        line = f"Downloading {bar} {progress_text} {self._progress_speed} Elapsed {elapsed_text}{eta_text}{active_info}"
+        
         columns = shutil.get_terminal_size((80, 24)).columns
         sys.stderr.write("\r\033[K" + fit_width(line, columns - 1))
         sys.stderr.flush()
@@ -1066,7 +1173,15 @@ class Jiosaavn:
         # Truncate each line to the terminal width so it never wraps. Wrapped
         # lines break the fixed cursor-up redraw and cause repeated/corrupted
         # output on narrow terminals (e.g. Termux).
-        output = "\r\033[K" + "\n".join(lines) + "\033[4A"
+        # On narrow terminals, use single-line mode without cursor movement.
+        if self._is_narrow or self._is_termux:
+            # Single line: just show the header with first active track
+            single_line = header
+            if active_lines and active_lines[0].strip():
+                single_line += " | " + active_lines[0].strip()
+            output = "\r\033[K" + fit_width(single_line, max_line)
+        else:
+            output = "\r\033[K" + "\n".join(lines) + "\033[4A"
         sys.stderr.write(output)
         sys.stderr.flush()
 
@@ -1156,7 +1271,12 @@ class Jiosaavn:
         else:
             eta_str = ""
         
-        bar = "━" * filled + ("╸" if filled < 40 else "") + " " * max(0, 40 - filled - 1)
+        # Build pulse bar - use Unicode on capable terminals, ASCII on Termux/narrow/--no-unicode
+        use_unicode = not (self._is_termux or self._is_narrow or not Colors.enabled())
+        if use_unicode:
+            bar = "━" * filled + ("╸" if filled < 40 else "") + " " * max(0, 40 - filled - 1)
+        else:
+            bar = "=" * filled + (">" if filled < 40 else "") + " " * max(0, 40 - filled - 1)
         bar_colored = green(bar) if Colors.enabled() else bar
         pct_str = bold(f"{pct}%") if Colors.enabled() else f"{pct}%"
         status_text = bold("Downloading") if Colors.enabled() else "Downloading"
@@ -2466,8 +2586,9 @@ class Jiosaavn:
                 import shlex
                 # Use shlex.split to safely parse the command without shell=True
                 cmd = shlex.split(self.post_hook)
-                subprocess.run(cmd, shell=False, check=False,  # nosec B603
-                               env={**os.environ, "JIOSAAVN_FILE": str(destination)})
+                if cmd:
+                    subprocess.run([*cmd, str(destination)], shell=False, check=False,  # nosec B603
+                                   env={**os.environ, "JIOSAAVN_FILE": str(destination)})
             except Exception as exc:
                 self._warning(f"  Warning: post-hook failed: {exc}")
 

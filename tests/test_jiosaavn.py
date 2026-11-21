@@ -1481,5 +1481,100 @@ class FolderSettingsTests(unittest.TestCase):
                 self.assertEqual(app.main(arguments), 1)
 
 
+class CacheExportAndHookTests(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        self.cfg_path = Path(self.folder.name) / 'settings/config.json'
+        patcher = patch.object(core, 'config_path', return_value=self.cfg_path)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_cache_options_from_config_and_cli_are_passed_to_client(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(app.main(['config', 'set', 'cache', 'true']), 0)
+            self.assertEqual(app.main(['config', 'set', 'cache_ttl', '120']), 0)
+
+        with patch.object(app, 'Jiosaavn') as cls, contextlib.redirect_stdout(io.StringIO()):
+            client = cls.return_value
+            client.downloaded = client.skipped = client.failed = 0
+            client.failures = []
+            self.assertEqual(app.main([URL]), 0)
+            self.assertTrue(cls.call_args.kwargs['cache'])
+            self.assertEqual(cls.call_args.kwargs['cache_ttl'], 120)
+
+        with patch.object(app, 'Jiosaavn') as cls, contextlib.redirect_stdout(io.StringIO()):
+            client = cls.return_value
+            client.downloaded = client.skipped = client.failed = 0
+            client.failures = []
+            self.assertEqual(app.main([URL, '--no-cache', '--cache-ttl', '60']), 0)
+            self.assertFalse(cls.call_args.kwargs['cache'])
+            self.assertEqual(cls.call_args.kwargs['cache_ttl'], 60)
+
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exc:
+            app.main([URL, '--cache-ttl', '0'])
+        self.assertEqual(exc.exception.code, 2)
+
+    def test_export_playlist_writes_actual_track_paths_and_extensions(self):
+        client = core.Jiosaavn(self.folder.name, session=Mock(), cover=False, lyrics=False)
+        playlist_data = {
+            'title': 'My Mix',
+            'songs': [
+                {**SONG, 'perma_url': URL + '1', 'song': 'First: Song', 'primary_artists': 'Artist A'},
+                {**SONG, 'perma_url': URL + '2', 'song': 'Second Song', 'primary_artists': 'Artist B'},
+            ],
+        }
+        client.metadata = Mock(return_value=playlist_data)
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            app.export_playlist(client, 'tok', 'm3u8', self.folder.name)
+            app.export_playlist(client, 'tok', 'm3u', self.folder.name)
+            app.export_playlist(client, 'tok', 'pls', self.folder.name)
+
+        m3u8_file = Path(self.folder.name) / 'My Mix.m3u8'
+        m3u_file = Path(self.folder.name) / 'My Mix.m3u'
+        pls_file = Path(self.folder.name) / 'My Mix.pls'
+        self.assertTrue(m3u8_file.exists())
+        self.assertTrue(m3u_file.exists())
+        self.assertTrue(pls_file.exists())
+
+        m3u8_text = m3u8_file.read_text(encoding='utf-8')
+        self.assertIn('Playlist - My Mix/01. First_ Song.m4a', m3u8_text)
+        self.assertIn('Playlist - My Mix/02. Second Song.m4a', m3u8_text)
+
+        pls_text = pls_file.read_text(encoding='utf-8')
+        self.assertIn('File1=Playlist - My Mix/01. First_ Song.m4a', pls_text)
+        self.assertIn('File2=Playlist - My Mix/02. Second Song.m4a', pls_text)
+
+        client.template = '{artist}/{album}'
+        with contextlib.redirect_stdout(io.StringIO()):
+            app.export_playlist(client, 'tok', 'm3u', self.folder.name)
+        templated_text = m3u_file.read_text(encoding='utf-8')
+        self.assertIn('Artist A/An Album/01. First_ Song.m4a', templated_text)
+
+    def test_post_hook_receives_file_path_as_argument_and_env(self):
+        session = Mock()
+        session.get.return_value = response(FIXTURE.read_bytes())
+        client = core.Jiosaavn(
+            self.folder.name,
+            session=session,
+            cover=False,
+            lyrics=False,
+            post_hook='echo --flag',
+        )
+        client.metadata = Mock(return_value={'123': dict(SONG)})
+        client.getCdnURL = Mock(return_value='https://aac.example/song.m4a')
+
+        with patch('subprocess.run') as run_mock, contextlib.redirect_stdout(io.StringIO()):
+            client.processTrack('token')
+
+        expected_path = next(Path(self.folder.name).rglob('*.m4a'))
+        run_mock.assert_called_once()
+        cmd = run_mock.call_args.args[0]
+        self.assertEqual(cmd, ['echo', '--flag', str(expected_path)])
+        self.assertFalse(run_mock.call_args.kwargs['shell'])
+        self.assertEqual(run_mock.call_args.kwargs['env']['JIOSAAVN_FILE'], str(expected_path))
+
+
 if __name__ == '__main__':
     unittest.main()
