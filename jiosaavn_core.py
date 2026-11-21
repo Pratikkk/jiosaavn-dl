@@ -91,43 +91,43 @@ class Colors:
     BRIGHT_WHITE = "\033[97m"
 
     @classmethod
-    def enabled(cls):
+    def enabled(cls) -> bool:
         """Check if color output should be enabled."""
         import sys
         return sys.stderr.isatty() and sys.stdout.isatty()
 
     @classmethod
-    def disable(cls):
+    def disable(cls) -> None:
         """Disable colors by setting all to empty string."""
         for attr in dir(cls):
             if not attr.startswith('_') and attr not in ('enabled', 'disable'):
                 setattr(cls, attr, '')
 
     @classmethod
-    def colorize(cls, text, color):
+    def colorize(cls, text: str, color: str) -> str:
         """Apply color to text if colors are enabled."""
         if cls.enabled():
             return f"{color}{text}{cls.RESET}"
         return text
 
     @classmethod
-    def red(cls, text): return cls.colorize(text, cls.RED)
+    def red(cls, text: str) -> str: return cls.colorize(text, cls.RED)
     @classmethod
-    def green(cls, text): return cls.colorize(text, cls.GREEN)
+    def green(cls, text: str) -> str: return cls.colorize(text, cls.GREEN)
     @classmethod
-    def yellow(cls, text): return cls.colorize(text, cls.YELLOW)
+    def yellow(cls, text: str) -> str: return cls.colorize(text, cls.YELLOW)
     @classmethod
-    def blue(cls, text): return cls.colorize(text, cls.BLUE)
+    def blue(cls, text: str) -> str: return cls.colorize(text, cls.BLUE)
     @classmethod
-    def magenta(cls, text): return cls.colorize(text, cls.MAGENTA)
+    def magenta(cls, text: str) -> str: return cls.colorize(text, cls.MAGENTA)
     @classmethod
-    def cyan(cls, text): return cls.colorize(text, cls.CYAN)
+    def cyan(cls, text: str) -> str: return cls.colorize(text, cls.CYAN)
     @classmethod
-    def gray(cls, text): return cls.colorize(text, cls.GRAY)
+    def gray(cls, text: str) -> str: return cls.colorize(text, cls.GRAY)
     @classmethod
-    def bold(cls, text): return cls.colorize(text, cls.BOLD)
+    def bold(cls, text: str) -> str: return cls.colorize(text, cls.BOLD)
     @classmethod
-    def dim(cls, text): return cls.colorize(text, cls.DIM)
+    def dim(cls, text: str) -> str: return cls.colorize(text, cls.DIM)
 
 
 class Spinner:
@@ -170,19 +170,19 @@ class Spinner:
             time.sleep(self.delay)
 
 
-def color_enabled():
+def color_enabled() -> bool:
     """Check if color output is enabled."""
     return Colors.enabled()
 
 
-def red(text): return Colors.red(text)
-def green(text): return Colors.green(text)
-def yellow(text): return Colors.yellow(text)
-def blue(text): return Colors.blue(text)
-def cyan(text): return Colors.cyan(text)
-def gray(text): return Colors.gray(text)
-def bold(text): return Colors.bold(text)
-def dim(text): return Colors.dim(text)
+def red(text: str) -> str: return Colors.red(text)
+def green(text: str) -> str: return Colors.green(text)
+def yellow(text: str) -> str: return Colors.yellow(text)
+def blue(text: str) -> str: return Colors.blue(text)
+def cyan(text: str) -> str: return Colors.cyan(text)
+def gray(text: str) -> str: return Colors.gray(text)
+def bold(text: str) -> str: return Colors.bold(text)
+def dim(text: str) -> str: return Colors.dim(text)
 
 
 API_URL = "https://www.jiosaavn.com/api.php"
@@ -208,7 +208,7 @@ class Failure(NamedTuple):
     url: Optional[str] = None
 
 
-def config_path():
+def config_path() -> Path:
     if os.environ.get("XDG_CONFIG_HOME"):
         root = Path(os.environ["XDG_CONFIG_HOME"]).expanduser()
     elif sys.platform == "win32":
@@ -220,11 +220,11 @@ def config_path():
     return root / "jiosaavn-dl/config.json"
 
 
-def load_config():
+def load_config() -> Dict[str, Any]:
     """Load the full config dict, returning defaults for missing keys.
     Raises DownloadError for invalid config (corrupt JSON, wrong types)."""
     path = config_path()
-    defaults = {
+    defaults: Dict[str, Any] = {
         "output": "Downloads",
         "quality": "320",
         "workers": COLLECTION_WORKERS,
@@ -253,13 +253,13 @@ def load_config():
         raise DownloadError(f"Cannot read settings at {path}: {exc}. Use 'jiosaavn-dl config reset' to clear, or fix the config file.") from exc
 
 
-def save_config(**kwargs):
+def save_config(**kwargs: Any) -> None:
     """Save configuration keys, preserving existing ones."""
     path = config_path()
     current = load_config()
     current.update({k: v for k, v in kwargs.items() if v is not None})
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = None
+    temporary: Optional[Path] = None
     try:
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
                                          prefix="config-", suffix=".tmp", delete=False) as handle:
