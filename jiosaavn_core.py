@@ -25,7 +25,6 @@ from sanitize_filename import sanitize
 from mutagen import MutagenError
 from mutagen.mp4 import MP4, MP4Cover
 
-
 class _RetryWithRetryAfter(Retry):
     """Retry class that respects Retry-After header for 429 responses."""
     def increment(self, method, url, response=None, _pool=None, _stacktrace=None):
@@ -838,6 +837,12 @@ class Jiosaavn:
         self._progress_active = False  # True while the bar is on screen
         self._active_titles = {}  # {track number: title} shown on the bar line
         self._active_amount = {}  # {track number: "45%" or "3.1MB"} shown next to the title
+        # Progress throttling: minimum interval between redraws (seconds)
+        self._progress_min_interval = 0.08 if self._is_termux or self._is_narrow else 0.05
+        self._progress_last_redraw = 0.0
+        # Cached terminal size to avoid repeated syscalls
+        self._terminal_size = None
+        self._terminal_size_ts = 0.0
         self._provided_session = session is not None
         self.session = session if session is not None else self._new_session()
         self._worker_local = threading.local()
@@ -881,7 +886,7 @@ class Jiosaavn:
         with self._progress_lock:
             sys.stderr.write("\r\033[K")  # erase the bar, print the line, redraw the bar
             print(message, file=stream, flush=True)
-            self._write_progress()
+            self._write_progress(force=True)
 
     def _status(self, message, verbose_only=False):
         if self.quiet or (verbose_only and not self.verbose):
@@ -912,7 +917,7 @@ class Jiosaavn:
             self._active_titles = {}
             self._active_amount = {}
             self._progress_active = True
-            self._write_progress()
+            self._write_progress(force=True)
 
     def _advance_progress(self, pos=None):
         if not self._progress_active:
@@ -922,26 +927,53 @@ class Jiosaavn:
             self._active_amount.pop(pos, None)
             self._progress_track_bytes.pop(pos, None)
             self._progress_done += 1
-            self._write_progress()
+            self._write_progress(force=True)
             if self._progress_done >= self._progress_total:
                 sys.stderr.write("\n")
                 sys.stderr.flush()
                 self._progress_active = False
 
-    def _write_progress(self):
-        """Redraw the progress display. The caller must hold self._progress_lock."""
-        if self.progress_style == "detailed":
-            self._write_detailed_progress()
-        elif self.progress_style == "compact":
-            self._write_compact_progress()
-        elif self.progress_style == "pulse":
-            self._write_pulse_progress()
-        elif self.progress_style == "minimal":
-            self._write_minimal_progress()
-        else:
-            self._write_single_progress()
+    def _get_terminal_columns(self, now=None):
+        """Get terminal width with caching to avoid repeated syscalls."""
+        if now is None:
+            now = time.monotonic()
+        if self._terminal_size is None or now - self._terminal_size_ts > 5.0:
+            try:
+                self._terminal_size = shutil.get_terminal_size((80, 24)).columns
+                self._terminal_size_ts = now
+            except Exception:
+                self._terminal_size = 80
+        return self._terminal_size
 
-    def _write_single_progress(self):
+    def _should_redraw(self):
+        """Check if enough time has passed since last redraw (throttling)."""
+        now = time.monotonic()
+        if now - self._progress_last_redraw >= self._progress_min_interval:
+            self._progress_last_redraw = now
+            return True
+        return False
+
+    def _write_progress(self, force=False):
+        """Redraw the progress display. The caller must hold self._progress_lock.
+
+        Args:
+            force: If True, bypass throttling and redraw immediately. Use for
+                significant state changes (track start/finish, completion).
+        """
+        # Throttle redraws to reduce CPU/terminal overhead, unless forced
+        if not force and not self._should_redraw():
+            return
+        now = time.monotonic()
+        if self.progress_style == "detailed":
+            self._write_detailed_progress(now)
+        elif self.progress_style == "compact":
+            self._write_compact_progress(now)
+        elif self.progress_style == "pulse":
+            self._write_pulse_progress(now)
+        else:
+            self._write_single_progress(now)
+
+    def _write_single_progress(self, now):
         """Redraw the single-line progress bar. The caller must hold self._progress_lock."""
         width = 8
         total = max(self._progress_total, 1)
@@ -950,7 +982,7 @@ class Jiosaavn:
         bar_filled = green("#" * filled) if Colors.enabled() else "#" * filled
         bar_empty = gray("-" * (width - filled)) if Colors.enabled() else "-" * (width - filled)
         bar = bar_filled + bar_empty
-        elapsed = max(0, int(time.monotonic() - self._collection_started_at))
+        elapsed = max(0, int(now - self._collection_started_at))
         hours, remainder = divmod(elapsed, 3600)
         minutes, seconds = divmod(remainder, 60)
         # Colorize key metrics
@@ -976,17 +1008,17 @@ class Jiosaavn:
             line += " " + ", ".join(
                 f"{pos:02d} {self._active_amount[pos] + ' ' if pos in self._active_amount else ''}{title}"
                 for pos, title in sorted(self._active_titles.items()))
-        columns = shutil.get_terminal_size((80, 24)).columns
+        columns = self._get_terminal_columns(now)
         sys.stderr.write("\r\033[K" + fit_width(line, columns - 1))
         sys.stderr.flush()
 
-    def _write_minimal_progress(self):
+    def _write_minimal_progress(self, now):
         """Redraw the minimal progress display (ASCII-only, single line).
         
         Optimized for Termux/narrow terminals. Uses only ASCII characters,
         no cursor movement, and minimal width.
         """
-        elapsed = max(0, int(time.monotonic() - self._collection_started_at))
+        elapsed = max(0, int(now - self._collection_started_at))
         hours, remainder = divmod(elapsed, 3600)
         minutes, seconds = divmod(remainder, 60)
 
@@ -1033,17 +1065,17 @@ class Jiosaavn:
         
         line = f"Downloading {bar} {progress_text} {self._progress_speed} Elapsed {elapsed_text}{eta_text}{active_info}"
         
-        columns = shutil.get_terminal_size((80, 24)).columns
+        columns = self._get_terminal_columns(now)
         sys.stderr.write("\r\033[K" + fit_width(line, columns - 1))
         sys.stderr.flush()
 
-    def _write_detailed_progress(self):
+    def _write_detailed_progress(self, now):
         """Redraw the detailed multi-line progress display. The caller must hold self._progress_lock."""
-        elapsed = max(0, int(time.monotonic() - self._collection_started_at))
+        elapsed = max(0, int(now - self._collection_started_at))
         hours, remainder = divmod(elapsed, 3600)
         minutes, seconds = divmod(remainder, 60)
 
-        columns = shutil.get_terminal_size((80, 24)).columns
+        columns = self._get_terminal_columns(now)
         max_line = max(columns - 1, 20)
 
         # Header line
@@ -1102,13 +1134,13 @@ class Jiosaavn:
         sys.stderr.write(output)
         sys.stderr.flush()
 
-    def _write_compact_progress(self):
+    def _write_compact_progress(self, now):
         """Redraw the compact progress display. The caller must hold self._progress_lock."""
-        elapsed = max(0, int(time.monotonic() - self._collection_started_at))
+        elapsed = max(0, int(now - self._collection_started_at))
         hours, remainder = divmod(elapsed, 3600)
         minutes, seconds = divmod(remainder, 60)
 
-        columns = shutil.get_terminal_size((80, 24)).columns
+        columns = self._get_terminal_columns(now)
         max_line = max(columns - 1, 20)
         active_count = len(self._active_titles)
 
@@ -1130,6 +1162,7 @@ class Jiosaavn:
         speed_text = cyan(self._progress_speed) if Colors.enabled() else self._progress_speed
         elapsed_str = f"{hours}:{minutes:02d}:{seconds:02d}"
         elapsed_text = blue(elapsed_str) if Colors.enabled() else elapsed_str
+
         bar_width = 20
         total = max(self._progress_total, 1)
         filled = int(bar_width * self._progress_done / total)
@@ -1185,9 +1218,9 @@ class Jiosaavn:
         sys.stderr.write(output)
         sys.stderr.flush()
 
-    def _write_pulse_progress(self):
+    def _write_pulse_progress(self, now):
         """Redraw the pulse-style progress display (yt-dlp style). The caller must hold self._progress_lock."""
-        elapsed = max(0, int(time.monotonic() - self._collection_started_at))
+        elapsed = max(0, int(now - self._collection_started_at))
         hours, remainder = divmod(elapsed, 3600)
         minutes, seconds = divmod(remainder, 60)
         
@@ -1216,13 +1249,10 @@ class Jiosaavn:
             arrow = ""
             empty_bar = ""
         
-        bar_str = filled_bar + arrow + empty_bar
-        
         # Percentage
         pct = int(self._progress_done / max(self._progress_total, 1) * 100)
         
         # ETA
-        elapsed_time = max(0, int(time.monotonic() - self._collection_started_at))
         remaining = self._progress_total - self._progress_done
         if self._progress_done >= 2 and remaining > 0:
             eta = int(elapsed * remaining / self._progress_done)
@@ -1255,7 +1285,7 @@ class Jiosaavn:
         status_text = f" {bold('Downloading') if Colors.enabled() else 'Downloading'}"
         
         # ETA
-        elapsed_time = max(0, int(time.monotonic() - self._collection_started_at))
+        elapsed_time = max(0, int(now - self._collection_started_at))
         remaining = self._progress_total - self._progress_done
         if self._progress_done >= 2 and remaining > 0:
             eta = int(elapsed * remaining / self._progress_done)
@@ -1281,7 +1311,7 @@ class Jiosaavn:
         pct_str = bold(f"{pct}%") if Colors.enabled() else f"{pct}%"
         status_text = bold("Downloading") if Colors.enabled() else "Downloading"
         line = f" {status_text}  {pct_str}  {bar_colored}{eta_str}"
-        columns = shutil.get_terminal_size((80, 24)).columns
+        columns = self._get_terminal_columns(now)
         sys.stderr.write("\r\033[K" + fit_width(line, max(columns - 1, 20)))
         sys.stderr.flush()
 
@@ -1304,7 +1334,7 @@ class Jiosaavn:
         with self._progress_lock:
             self._active_titles[pos] = " ".join(str(title).split())
             self._progress_track_bytes[pos] = 0
-            self._write_progress()
+            self._write_progress(force=True)
 
     def _track_finished(self, pos, total, title, artists, outcome, announce=True):
         """Drop a track from the progress line and print how it ended."""
@@ -1339,10 +1369,11 @@ class Jiosaavn:
             # Redraw only when the shown value changes, and never for a track
             # that has already finished (a late callback).
             if pos in self._active_titles:
+                now = time.monotonic()
                 previous = self._progress_track_bytes.get(pos, 0)
                 self._progress_bytes_received += done - previous if done >= previous else done
                 self._progress_track_bytes[pos] = done
-                elapsed = max(time.monotonic() - self._progress_started_at, 0.001)
+                elapsed = max(now - self._progress_started_at, 0.001)
                 speed_mbps = self._progress_bytes_received / elapsed / (1024 * 1024)
                 if speed_mbps >= 1000:
                     speed = f"{speed_mbps / 1024:.1f}GB/s"
@@ -1354,7 +1385,7 @@ class Jiosaavn:
                     self._active_amount[pos] = amount
                     changed = True
                 if changed:
-                    self._write_progress()
+                    self._write_progress(force=True)
 
     def _track_progress_baseline(self, pos, done):
         """Set the saved-byte baseline so resumed data is not counted as received."""
@@ -1911,7 +1942,9 @@ class Jiosaavn:
         with temp.open("ab" if append else "wb") as handle:
             last_time = time.monotonic()
             bytes_since_throttle = 0
-            for chunk in response.iter_content(chunk_size=128 * 1024):
+            # Larger chunk size reduces callback frequency and syscall overhead
+            chunk_size = 512 * 1024
+            for chunk in response.iter_content(chunk_size=chunk_size):
                 if chunk:
                     handle.write(chunk)
                     size += len(chunk)
