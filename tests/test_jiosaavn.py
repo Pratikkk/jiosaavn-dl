@@ -556,6 +556,62 @@ class ClientTests(unittest.TestCase):
             'Range': 'bytes=3-', 'Accept-Encoding': 'identity',
         })
 
+    def test_resume_with_matching_etag_resumes_download(self):
+        """ETag match on resume should continue the download from where it left off."""
+        path = Path(self.temp.name) / 'track.m4a'
+        self.client.partial_path(path).write_bytes(b'abc')
+        result = response(b'defghij', headers={
+            'Content-Length': '7',
+            'Content-Range': 'bytes 3-9/10',
+            'ETag': '"abc123"',
+        })
+        result.status_code = 206
+        self.session.get.return_value = result
+        temp = self.client.download_file('https://example.com/audio', path)
+        self.assertEqual(temp.read_bytes(), b'abcdefghij')
+
+    def test_resume_with_etag_mismatch_restarts_download(self):
+        """ETag mismatch on resume should discard partial and restart."""
+        path = Path(self.temp.name) / 'track.m4a'
+        self.client.partial_path(path).write_bytes(b'partial_old_data')
+        result = response(b'complete_new_data', headers={
+            'Content-Length': '18',
+            'ETag': 'different-etag',
+        })
+        result.status_code = 200
+        self.session.get.return_value = result
+        temp = self.client.download_file('https://example.com/audio', path)
+        self.assertEqual(temp.read_bytes(), b'complete_new_data')
+        self.assertEqual(self.session.get.call_count, 1)
+
+    def test_resume_with_matching_content_md5_resumes_download(self):
+        """Content-MD5 match on resume should continue the download."""
+        path = Path(self.temp.name) / 'track.m4a'
+        self.client.partial_path(path).write_bytes(b'abc')
+        result = response(b'defghij', headers={
+            'Content-Length': '7',
+            'Content-Range': 'bytes 3-9/10',
+            'Content-MD5': 'abc123def456',
+        })
+        result.status_code = 206
+        self.session.get.return_value = result
+        temp = self.client.download_file('https://example.com/audio', path)
+        self.assertEqual(temp.read_bytes(), b'abcdefghij')
+
+    def test_resume_with_content_md5_mismatch_restarts_download(self):
+        """Content-MD5 mismatch on resume should discard partial and restart."""
+        path = Path(self.temp.name) / 'track.m4a'
+        self.client.partial_path(path).write_bytes(b'partial_old_data')
+        result = response(b'complete_new_data', headers={
+            'Content-Length': '18',
+            'Content-MD5': 'different-md5',
+        })
+        result.status_code = 200
+        self.session.get.return_value = result
+        temp = self.client.download_file('https://example.com/audio', path)
+        self.assertEqual(temp.read_bytes(), b'complete_new_data')
+        self.assertEqual(self.session.get.call_count, 1)
+
     def test_download_reports_progress_against_the_content_length(self):
         path = Path(self.temp.name) / 'track.m4a'
         result = response(b'abcdefgh', headers={'Content-Length': '8'})
